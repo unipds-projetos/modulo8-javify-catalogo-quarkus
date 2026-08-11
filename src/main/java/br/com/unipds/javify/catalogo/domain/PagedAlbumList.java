@@ -8,4 +8,3 @@ public record PagedAlbumList (
         int page,
         int size) {
 }
-

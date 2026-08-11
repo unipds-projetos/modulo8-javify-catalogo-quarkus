@@ -5,15 +5,15 @@ import br.com.unipds.javify.catalogo.domain.PagedAlbumList;
 import br.com.unipds.javify.catalogo.exception.AlbumNaoEncontradoException;
 import br.com.unipds.javify.catalogo.repository.AlbumRepository;
 import com.mongodb.client.model.Filters;
+import io.quarkus.cache.*;
+import io.quarkus.logging.Log;
 import jakarta.data.Order;
 import jakarta.data.Sort;
-import jakarta.data.page.impl.PageRecord;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.data.page.Page;
 import jakarta.data.page.PageRequest;
 import org.bson.conversions.Bson;
-import org.bson.types.ObjectId;
 import org.eclipse.jnosql.databases.mongodb.mapping.MongoDBTemplate;
 
 import java.util.List;
@@ -27,7 +27,12 @@ public class AlbumService {
     @Inject
     MongoDBTemplate mongoDBTemplate;
 
+    @Inject
+    CacheManager cacheManager;
+
+    @CacheResult(cacheName = "albuns")
     public PagedAlbumList listarTodos(int page, int size) {
+        Log.info("Chamando AlbumService.listarTodos");
         PageRequest pageRequest = PageRequest.ofPage(page).size(size);
         Page<Album> albumPage = albumRepository.findAll(pageRequest, Order.by(Sort.desc("anoLancamento")));
         long totalElements = mongoDBTemplate.count(Album.class);
@@ -44,24 +49,33 @@ public class AlbumService {
         return new PagedAlbumList(albuns, totalElements, page, size);
     }
 
-    public Album buscarPorId(String id) {
+    @CacheResult(cacheName = "album")
+    public Album buscarPorId(@CacheKey String id) {
+        Log.info("Chamando AlbumService.buscarPorId");
         return albumRepository.findById(id)
                 .orElseThrow(() -> new AlbumNaoEncontradoException(id));
     }
 
+    @CacheInvalidateAll(cacheName = "albuns")
     public Album salvarNovoAlbum(Album novoAlbum) {
         return albumRepository.save(novoAlbum);
     }
 
-    public Album atualizarAlbum(String id, Album albumAtualizado) {
+//    @CacheInvalidate(cacheName = "album")
+    @CacheInvalidateAll(cacheName = "albuns")
+    public Album atualizarAlbum(/* @CacheKey */ String id, Album albumAtualizado) {
         buscarPorId(id);
         if (!id.equals(albumAtualizado.id())) {
             throw new AlbumNaoEncontradoException(albumAtualizado.id());
         }
-        return albumRepository.save(albumAtualizado);
+        Album salvo = albumRepository.save(albumAtualizado);
+        cacheManager.getCache("album").ifPresent(cache -> cache.invalidate(id).await().indefinitely());
+        return salvo;
     }
 
-    public void excluirAlbum(String id) {
+    @CacheInvalidate(cacheName = "album")
+    @CacheInvalidateAll(cacheName = "albuns")
+    public void excluirAlbum(@CacheKey String id) {
         System.out.println("Vai excluir o album de id: " + id);
         if (!albumRepository.existsById(id)) {
             System.out.println("Nao encontrou o album de id: " + id);
